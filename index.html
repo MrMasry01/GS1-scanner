@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EPG Scan">
+<title>EPG Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f2ec;
+    --ink: #1a1410;
+    --accent: #c94b0a;
+    --accent2: #2a6b3c;
+    --surface: #ffffff;
+    --border: #d9d3c8;
+    --muted: #8c8070;
+    --scan-line: rgba(201,75,10,0.7);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 20px 12px;
+    border-bottom: 1.5px solid var(--border);
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .logo-top {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+    line-height: 1;
+  }
+
+  .logo-top span { color: var(--accent); }
+
+  .logo-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .header-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    color: var(--accent2);
+    background: rgba(42,107,60,0.1);
+    border: 1px solid rgba(42,107,60,0.3);
+    padding: 4px 8px;
+    border-radius: 2px;
+    text-transform: uppercase;
+  }
+
+  /* ── MAIN ── */
+  main {
+    flex: 1;
+    padding: 16px 16px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ── SCANNER BLOCK ── */
+  .scanner-card {
+    background: var(--ink);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .scanner-inner {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
+    max-height: 280px;
+    overflow: hidden;
+  }
+
+  #reader {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  #reader video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+
+  /* Override html5-qrcode chrome */
+  #reader__scan_region { border: none !important; }
+  #reader__scan_region img { display: none !important; }
+  #reader__dashboard { display: none !important; }
+
+  .scan-idle {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--ink);
+    color: var(--muted);
+  }
+
+  .scan-idle-icon {
+    width: 56px;
+    height: 56px;
+    opacity: 0.3;
+  }
+
+  .scan-idle p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #6b6055;
+  }
+
+  /* Targeting overlay */
+  .scan-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .scan-target {
+    width: 220px;
+    height: 100px;
+    position: relative;
+  }
+
+  .scan-target::before,
+  .scan-target::after,
+  .scan-target > i::before,
+  .scan-target > i::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-color: var(--accent);
+    border-style: solid;
+  }
+
+  .scan-target::before { top: 0; left: 0; border-width: 2.5px 0 0 2.5px; border-radius: 2px 0 0 0; }
+  .scan-target::after  { top: 0; right: 0; border-width: 2.5px 2.5px 0 0; border-radius: 0 2px 0 0; }
+  .scan-target > i::before { bottom: 0; left: 0; border-width: 0 0 2.5px 2.5px; border-radius: 0 0 0 2px; }
+  .scan-target > i::after  { bottom: 0; right: 0; border-width: 0 2.5px 2.5px 0; border-radius: 0 0 2px 0; }
+
+  .scan-line-anim {
+    position: absolute;
+    left: 8px; right: 8px;
+    height: 1.5px;
+    background: var(--scan-line);
+    box-shadow: 0 0 10px 2px var(--scan-line);
+    top: 10%;
+    animation: scanmove 1.8s ease-in-out infinite;
+  }
+
+  @keyframes scanmove {
+    0%   { top: 8%; }
+    50%  { top: 88%; }
+    100% { top: 8%; }
+  }
+
+  /* Scanner bottom bar */
+  .scanner-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.05);
+  }
+
+  .scanner-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #8c8070;
+  }
+
+  .scanner-status.active { color: var(--accent); }
+  .scanner-status.found { color: #5cbf7a; }
+
+  .scan-btn {
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: none;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .scan-btn.start {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .scan-btn.start:active { background: #a33c08; transform: scale(0.97); }
+
+  .scan-btn.stop {
+    background: rgba(255,255,255,0.1);
+    color: #ccc;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  /* ── MANUAL INPUT ── */
+  .manual-wrap {
+    display: flex;
+    gap: 8px;
+  }
+
+  .manual-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+  }
+
+  .manual-input::placeholder { color: #bbb4a8; }
+  .manual-input:focus { border-color: var(--accent); }
+
+  .manual-go {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+
+  .manual-go:active { background: #a33c08; }
+
+  /* ── LOADING STATE ── */
+  .loading-block {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 28px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border: 1.5px solid var(--border);
+  }
+
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .loading-text strong {
+    font-size: 0.9rem;
+    font-weight: 700;
+  }
+
+  .loading-text span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  /* ── PRODUCT CARD ── */
+  .product-card {
+    background: var(--surface);
+    border-radius: 12px;
+    border: 1.5px solid var(--border);
+    overflow: hidden;
+    animation: rise 0.35s ease;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Card header strip */
+  .card-header {
+    background: var(--ink);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .card-header-icon {
+    width: 38px;
+    height: 38px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+
+  .card-header-text { flex: 1; }
+
+  .card-header-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+  }
+
+  .card-header-brand {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+
+  .card-header-barcode {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: #6b6055;
+    letter-spacing: 1px;
+    text-align: right;
+  }
+
+  /* Card body */
+  .card-body {
+    padding: 4px 0 8px;
+  }
+
+  .field-row {
+    display: flex;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f0ebe3;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .field-row:last-child { border-bottom: none; }
+
+  .field-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    min-width: 110px;
+    padding-top: 1px;
+    flex-shrink: 0;
+  }
+
+  .field-value {
+    font-size: 0.82rem;
+    color: var(--ink);
+    line-height: 1.4;
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .field-value.mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+    font-size: 0.78rem;
+  }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+
+  .status-pill.active {
+    background: rgba(42,107,60,0.12);
+    color: var(--accent2);
+    border: 1px solid rgba(42,107,60,0.25);
+  }
+
+  .status-pill::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* Section divider */
+  .section-divider {
+    padding: 8px 16px 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.58rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #bbb4a8;
+    border-bottom: 1px solid #f0ebe3;
+    background: #faf8f4;
+  }
+
+  /* Raw AI response card */
+  .ai-card {
+    background: var(--surface);
+    border-radius: 12px;
+    border: 1.5px solid var(--border);
+    overflow: hidden;
+    animation: rise 0.35s ease;
+  }
+
+  .ai-card-header {
+    padding: 12px 16px;
+    background: #faf8f4;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ai-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(201,75,10,0.08);
+    border: 1px solid rgba(201,75,10,0.2);
+    padding: 3px 7px;
+    border-radius: 3px;
+  }
+
+  .ai-card-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  .ai-card-body {
+    padding: 14px 16px;
+    font-size: 0.82rem;
+    line-height: 1.65;
+    color: #3a3028;
+    white-space: pre-wrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* Error block */
+  .error-block {
+    background: #fff5f3;
+    border: 1.5px solid #f5c6b8;
+    border-radius: 12px;
+    padding: 18px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .error-icon { font-size: 1.4rem; flex-shrink: 0; margin-top: 1px; }
+
+  .error-text strong {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+
+  .error-text p {
+    font-size: 0.78rem;
+    color: #8c5040;
+    line-height: 1.5;
+  }
+
+  /* History */
+  .history-section { display: flex; flex-direction: column; gap: 6px; }
+
+  .history-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.58rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 2px;
+  }
+
+  .history-item {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .history-item:active { border-color: var(--accent); background: #fff5f3; }
+
+  .history-item-name {
+    flex: 1;
+    font-size: 0.82rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-item-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+
+  /* Divider line */
+  .hr { border: none; border-top: 1.5px solid var(--border); margin: 2px 0; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-top">EPG<span>·</span>SCAN</div>
+    <div class="logo-sub">GS1 Product Lookup</div>
+  </div>
+  <div class="header-badge">● GS1 UK</div>
+</header>
+
+<main>
+
+  <!-- ── SCANNER ── -->
+  <div class="scanner-card">
+    <div class="scanner-inner">
+      <div class="scan-idle" id="scan-idle">
+        <svg class="scan-idle-icon" viewBox="0 0 56 56" fill="none">
+          <rect x="4" y="4" width="16" height="16" rx="2" stroke="#6b6055" stroke-width="2"/>
+          <rect x="36" y="4" width="16" height="16" rx="2" stroke="#6b6055" stroke-width="2"/>
+          <rect x="4" y="36" width="16" height="16" rx="2" stroke="#6b6055" stroke-width="2"/>
+          <rect x="36" y="36" width="16" height="16" rx="2" stroke="#3a3028" stroke-width="2" stroke-dasharray="4 2"/>
+          <line x1="6" y1="28" x2="50" y2="28" stroke="#c94b0a" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.5"/>
+        </svg>
+        <p>Camera inactive</p>
+      </div>
+      <div id="reader" style="display:none;width:100%;height:100%"></div>
+      <div class="scan-overlay" id="scan-overlay" style="display:none">
+        <div class="scan-target">
+          <i></i>
+          <div class="scan-line-anim"></div>
+        </div>
+      </div>
+    </div>
+    <div class="scanner-bar">
+      <span class="scanner-status" id="scan-status">Ready</span>
+      <button class="scan-btn start" id="scan-btn" onclick="toggleScanner()">Start Camera</button>
+    </div>
+  </div>
+
+  <!-- ── MANUAL ENTRY ── -->
+  <div class="manual-wrap">
+    <input
+      class="manual-input"
+      id="manual-input"
+      type="number"
+      inputmode="numeric"
+      placeholder="Enter barcode manually…"
+      maxlength="14"
+      onkeydown="if(event.key==='Enter'){this.blur();lookupBarcode(this.value.trim());}"
+    >
+    <button class="manual-go" onclick="lookupBarcode(document.getElementById('manual-input').value.trim())">Look up</button>
+  </div>
+
+  <!-- ── RESULT AREA ── -->
+  <div id="result-area"></div>
+
+  <!-- ── HISTORY ── -->
+  <div id="history-section"></div>
+
+</main>
+
+<script>
+// ──────────────────────────────────────────────
+//  State
+// ──────────────────────────────────────────────
+let scanner = null;
+let isScanning = false;
+let lastCode = '';
+let lastCodeTime = 0;
+let history = JSON.parse(localStorage.getItem('epg_scan_history') || '[]');
+
+renderHistory();
+
+// ──────────────────────────────────────────────
+//  Scanner
+// ──────────────────────────────────────────────
+function toggleScanner() {
+  isScanning ? stopScanner() : startScanner();
+}
+
+function startScanner() {
+  document.getElementById('scan-idle').style.display = 'none';
+  document.getElementById('reader').style.display = 'block';
+  document.getElementById('scan-overlay').style.display = 'flex';
+  document.getElementById('scan-btn').textContent = 'Stop';
+  document.getElementById('scan-btn').className = 'scan-btn stop';
+  setStatus('Scanning…', 'active');
+
+  scanner = new Html5Qrcode('reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    {
+      fps: 12,
+      qrbox: { width: 240, height: 100 },
+      supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA],
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.DATA_MATRIX,
+      ]
+    },
+    onScanSuccess,
+    () => {}
+  ).catch(err => {
+    setStatus('Camera denied', '');
+    stopScanner();
+    showError('Camera access denied', 'Please allow camera access in iOS Settings → Safari → Camera, then refresh this page.');
+  });
+
+  isScanning = true;
+}
+
+function stopScanner() {
+  if (scanner) {
+    scanner.stop().catch(() => {});
+    scanner = null;
+  }
+  isScanning = false;
+  document.getElementById('reader').style.display = 'none';
+  document.getElementById('scan-idle').style.display = 'flex';
+  document.getElementById('scan-overlay').style.display = 'none';
+  document.getElementById('scan-btn').textContent = 'Start Camera';
+  document.getElementById('scan-btn').className = 'scan-btn start';
+  setStatus('Ready', '');
+}
+
+function onScanSuccess(code) {
+  const now = Date.now();
+  if (code === lastCode && now - lastCodeTime < 5000) return;
+  lastCode = code;
+  lastCodeTime = now;
+
+  // Haptic
+  if (navigator.vibrate) navigator.vibrate(40);
+
+  setStatus('Found · ' + code, 'found');
+  stopScanner();
+  lookupBarcode(code);
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('scan-status');
+  el.textContent = msg;
+  el.className = 'scanner-status ' + (cls || '');
+}
+
+// ──────────────────────────────────────────────
+//  Lookup via Claude
+// ──────────────────────────────────────────────
+async function lookupBarcode(code) {
+  code = code.replace(/\D/g, '');
+  if (!code || code.length < 8) {
+    showError('Invalid barcode', 'Please scan or enter a valid EAN-8, EAN-13 or GTIN barcode.');
+    return;
+  }
+
+  // Set manual input
+  document.getElementById('manual-input').value = code;
+
+  showLoading(code);
+
+  try {
+    const result = await fetchProductViaAI(code);
+    showResult(code, result);
+    addHistory(code, result.productName || 'Unknown Product');
+  } catch (err) {
+    showError('Lookup failed', err.message || 'Could not retrieve product information. Please check your connection and try again.');
+  }
+}
+
+async function fetchProductViaAI(gtin) {
+  const prompt = `You are a product data assistant. Fetch and extract product information for GTIN barcode: ${gtin}
+
+Please look up this GTIN on the Verified by GS1 global registry at:
+https://www.gs1.org/services/verified-by-gs1/results?gtin=${gtin}&lang=en
+
+Extract and return a JSON object with these fields (use null for missing fields):
+{
+  "productName": "full product name",
+  "brandName": "brand name",
+  "companyName": "manufacturer/licensee company name",
+  "gtin": "${gtin}",
+  "gs1Status": "Active/Inactive/Unknown",
+  "gpcCategory": "Global Product Classification category",
+  "netContent": "e.g. 30 Count",
+  "countriesOfSale": "e.g. Worldwide / UK",
+  "productDescription": "short product description if available",
+  "gs1MemberOrg": "e.g. GS1 UK",
+  "imageUrl": "product image URL if available, else null",
+  "additionalInfo": "any other notable details"
+}
+
+Respond ONLY with valid JSON, no markdown, no explanation.`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'API request failed (' + response.status + ')');
+  }
+
+  const data = await response.json();
+
+  // Extract text content from response (may include tool use blocks)
+  const textBlocks = data.content.filter(b => b.type === 'text');
+  const rawText = textBlocks.map(b => b.text).join('');
+
+  // Parse JSON from response
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Could not parse product data from response');
+
+  return JSON.parse(jsonMatch[0]);
+}
+
+// ──────────────────────────────────────────────
+//  UI Renderers
+// ──────────────────────────────────────────────
+function showLoading(code) {
+  document.getElementById('result-area').innerHTML = `
+    <div class="loading-block">
+      <div class="spinner"></div>
+      <div class="loading-text">
+        <strong>Looking up product…</strong>
+        <span>GTIN · ${code}</span>
+      </div>
+    </div>`;
+}
+
+function showResult(code, p) {
+  const fields = [
+    { label: 'Product Name', value: p.productName, mono: false },
+    { label: 'Brand', value: p.brandName, mono: false },
+    { label: 'Company', value: p.companyName, mono: false },
+    { label: 'GTIN', value: code, mono: true },
+    { label: 'GPC Category', value: p.gpcCategory, mono: false },
+    { label: 'Net Content', value: p.netContent, mono: false },
+    { label: 'Countries of Sale', value: p.countriesOfSale, mono: false },
+    { label: 'GS1 Registry', value: p.gs1MemberOrg, mono: false },
+  ].filter(f => f.value && f.value !== 'null' && f.value !== 'Unknown');
+
+  const statusHtml = p.gs1Status && p.gs1Status !== 'null'
+    ? `<div class="status-pill active">${p.gs1Status}</div>`
+    : '';
+
+  const fieldsHtml = fields.map(f => `
+    <div class="field-row">
+      <div class="field-label">${f.label}</div>
+      <div class="field-value ${f.mono ? 'mono' : ''}">${escHtml(f.value)}</div>
+    </div>`).join('');
+
+  const descHtml = p.productDescription && p.productDescription !== 'null' ? `
+    <div class="section-divider">Description</div>
+    <div class="field-row">
+      <div class="field-value" style="font-weight:400;font-size:0.8rem;line-height:1.6;color:#5a4e42">${escHtml(p.productDescription)}</div>
+    </div>` : '';
+
+  const addlHtml = p.additionalInfo && p.additionalInfo !== 'null' ? `
+    <div class="section-divider">Additional Info</div>
+    <div class="field-row">
+      <div class="field-value" style="font-weight:400;font-size:0.78rem;line-height:1.6;color:#5a4e42">${escHtml(p.additionalInfo)}</div>
+    </div>` : '';
+
+  document.getElementById('result-area').innerHTML = `
+    <div class="product-card">
+      <div class="card-header">
+        <div class="card-header-icon">📦</div>
+        <div class="card-header-text">
+          <div class="card-header-name">${escHtml(p.productName || 'Unknown Product')}</div>
+          <div class="card-header-brand">${escHtml(p.brandName || p.companyName || '')}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          ${statusHtml}
+          <div class="card-header-barcode">${code}</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="section-divider">Product Details</div>
+        ${fieldsHtml}
+        ${descHtml}
+        ${addlHtml}
+      </div>
+    </div>`;
+}
+
+function showError(title, msg) {
+  document.getElementById('result-area').innerHTML = `
+    <div class="error-block">
+      <div class="error-icon">⚠️</div>
+      <div class="error-text">
+        <strong>${escHtml(title)}</strong>
+        <p>${escHtml(msg)}</p>
+      </div>
+    </div>`;
+}
+
+// ──────────────────────────────────────────────
+//  History
+// ──────────────────────────────────────────────
+function addHistory(code, name) {
+  history = history.filter(h => h.code !== code);
+  history.unshift({ code, name, ts: Date.now() });
+  history = history.slice(0, 8);
+  localStorage.setItem('epg_scan_history', JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  if (!history.length) {
+    document.getElementById('history-section').innerHTML = '';
+    return;
+  }
+  document.getElementById('history-section').innerHTML = `
+    <div class="history-section">
+      <div class="history-label">Recent Scans</div>
+      ${history.map(h => `
+        <div class="history-item" onclick="lookupBarcode('${escHtml(h.code)}')">
+          <div class="history-item-name">${escHtml(h.name)}</div>
+          <div class="history-item-code">${escHtml(h.code)}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// ──────────────────────────────────────────────
+//  Utils
+// ──────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>
