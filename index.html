@@ -762,56 +762,112 @@ async function lookupBarcode(code) {
 }
 
 async function fetchProductViaAI(gtin) {
-  const prompt = `You are a product data assistant. Fetch and extract product information for GTIN barcode: ${gtin}
+  // Try sources in order until one returns data
+  const sources = [
+    () => fetchFromOpenFoodFacts(gtin),
+    () => fetchFromUPCitemdb(gtin),
+    () => fetchFromGS1(gtin),
+  ];
 
-Please look up this GTIN on the Verified by GS1 global registry at:
-https://www.gs1.org/services/verified-by-gs1/results?gtin=${gtin}&lang=en
-
-Extract and return a JSON object with these fields (use null for missing fields):
-{
-  "productName": "full product name",
-  "brandName": "brand name",
-  "companyName": "manufacturer/licensee company name",
-  "gtin": "${gtin}",
-  "gs1Status": "Active/Inactive/Unknown",
-  "gpcCategory": "Global Product Classification category",
-  "netContent": "e.g. 30 Count",
-  "countriesOfSale": "e.g. Worldwide / UK",
-  "productDescription": "short product description if available",
-  "gs1MemberOrg": "e.g. GS1 UK",
-  "imageUrl": "product image URL if available, else null",
-  "additionalInfo": "any other notable details"
-}
-
-Respond ONLY with valid JSON, no markdown, no explanation.`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || 'API request failed (' + response.status + ')');
+  let lastError = null;
+  for (const source of sources) {
+    try {
+      const result = await source();
+      if (result && result.productName) return result;
+    } catch (e) {
+      lastError = e;
+    }
   }
 
-  const data = await response.json();
+  throw lastError || new Error('Product not found in any database');
+}
 
-  // Extract text content from response (may include tool use blocks)
-  const textBlocks = data.content.filter(b => b.type === 'text');
-  const rawText = textBlocks.map(b => b.text).join('');
+async function fetchFromOpenFoodFacts(gtin) {
+  const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${gtin}.json`);
+  if (!res.ok) throw new Error('OpenFoodFacts request failed');
+  const data = await res.json();
+  if (data.status !== 1 || !data.product) throw new Error('Not found in Open Food Facts');
+  const p = data.product;
+  return {
+    productName: p.product_name || p.product_name_en || null,
+    brandName: p.brands || null,
+    companyName: p.brands || null,
+    gtin,
+    gs1Status: 'Active',
+    gpcCategory: (p.categories || '').split(',')[0].trim() || null,
+    netContent: p.quantity || null,
+    countriesOfSale: p.countries || null,
+    productDescription: p.generic_name || p.ingredients_text_en || null,
+    gs1MemberOrg: 'Open Food Facts',
+    imageUrl: p.image_front_small_url || null,
+    additionalInfo: p.labels || null,
+    source: 'Open Food Facts'
+  };
+}
 
-  // Parse JSON from response
-  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('Could not parse product data from response');
+async function fetchFromUPCitemdb(gtin) {
+  const res = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${gtin}`);
+  if (!res.ok) throw new Error('UPCitemdb request failed');
+  const data = await res.json();
+  if (!data.items || data.items.length === 0) throw new Error('Not found in UPCitemdb');
+  const item = data.items[0];
+  return {
+    productName: item.title || null,
+    brandName: item.brand || null,
+    companyName: item.brand || null,
+    gtin,
+    gs1Status: 'Active',
+    gpcCategory: item.category || null,
+    netContent: null,
+    countriesOfSale: null,
+    productDescription: item.description || null,
+    gs1MemberOrg: 'UPC Item DB',
+    imageUrl: (item.images && item.images[0]) || null,
+    additionalInfo: item.model ? 'Model: ' + item.model : null,
+    source: 'UPC Item DB'
+  };
+}
 
-  return JSON.parse(jsonMatch[0]);
+async function fetchFromGS1(gtin) {
+  // Use a CORS proxy to hit the Verified by GS1 page and parse it
+  const target = `https://www.gs1.org/services/verified-by-gs1/results?gtin=${gtin}&lang=en`;
+  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`;
+  const res = await fetch(proxy);
+  if (!res.ok) throw new Error('GS1 proxy request failed');
+  const data = await res.json();
+  const html = data.contents || '';
+
+  // Parse key fields from the HTML
+  const extract = (pattern) => {
+    const m = html.match(pattern);
+    return m ? m[1].replace(/<[^>]+>/g, '').trim() : null;
+  };
+
+  const productName = extract(/product[_-]?name["']?\s*[^>]*>([^<]{2,})/i)
+    || extract(/class="[^"]*product[^"]*"[^>]*>([^<]{2,})/i);
+  const brand = extract(/brand["']?\s*[^>]*>([^<]{2,})/i);
+  const company = extract(/licens(?:ee|ed)[^>]*>([^<]{2,})/i)
+    || extract(/company[^>]*>([^<]{2,})/i);
+  const gpc = extract(/gpc[^>]*>([^<]{3,})/i)
+    || extract(/classif[^>]*>([^<]{3,})/i);
+
+  if (!productName && !brand && !company) throw new Error('Could not parse GS1 page');
+
+  return {
+    productName: productName || 'GTIN ' + gtin,
+    brandName: brand,
+    companyName: company,
+    gtin,
+    gs1Status: html.includes('active') || html.includes('Active') ? 'Active' : 'Registered',
+    gpcCategory: gpc,
+    netContent: null,
+    countriesOfSale: null,
+    productDescription: null,
+    gs1MemberOrg: 'GS1 UK (Verified by GS1)',
+    imageUrl: null,
+    additionalInfo: null,
+    source: 'Verified by GS1'
+  };
 }
 
 // ──────────────────────────────────────────────
@@ -873,6 +929,7 @@ function showResult(code, p) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           ${statusHtml}
           <div class="card-header-barcode">${code}</div>
+          ${p.source ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.5rem;color:#6b6055;letter-spacing:1px">${escHtml(p.source)}</div>` : ''}
         </div>
       </div>
       <div class="card-body">
